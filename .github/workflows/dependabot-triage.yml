@@ -1,0 +1,140 @@
+# =============================================================================
+#  Triage for Dependabot pull requests. Classifies and explains. Never merges.
+#
+#  Copy to .github/workflows/dependabot-triage.yml in each target repository.
+#
+#  WHAT THIS DOES
+#    Reads what the PR actually changes, scores it against the central policy,
+#    then labels the PR and posts the reasoning as a comment. A reviewer opening
+#    the PR can see immediately whether it is a routine patch or a major bump of
+#    a package the team deliberately holds - without going and reading the policy.
+#
+#  WHAT THIS DOES NOT DO
+#    Merge anything. Auto-merge is disabled globally in config/policy.json
+#    (autoMerge.enabled = false), so every pull request waits for a person.
+#
+#    The classification still runs, because that is the part that makes review
+#    fast. If you later want low-risk updates to merge themselves, flip that one
+#    boolean and add the merge step back - the tier definitions are already there.
+#
+#  TOKEN NOTE - this trips everyone up:
+#    Workflows triggered by Dependabot run with a READ-ONLY GITHUB_TOKEN by
+#    default and cannot read your Actions secrets. The `permissions:` block below
+#    is what raises the token for this workflow. Do not switch to
+#    pull_request_target to work around it: that runs untrusted PR code with a
+#    privileged token.
+# =============================================================================
+name: Dependabot triage
+
+on:
+  pull_request:
+
+# Labelling and commenting only. No `contents: write` - this workflow has no
+# business writing to the repository, and not holding the permission is a
+# stronger guarantee than choosing not to use it.
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: dependabot-triage-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  triage:
+    name: Classify against central policy
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+
+    steps:
+      # ---------------------------------------------------------------------
+      #  1. Extract structured metadata about what this PR actually changes.
+      #     alert-lookup populates ghsa-id / cvss / alert-state, which is how we
+      #     tell a routine bump from a security fix.
+      # ---------------------------------------------------------------------
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@d7267f607e9d3fb96fc2fbe83e0af444713e90b7 # v2.3.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          alert-lookup: true
+          compat-lookup: true
+      # The policy is vendored at .dependabot-policy/ in this repository,
+      # so there is nothing to check out.
+
+      - name: Evaluate policy
+        id: decision
+        shell: pwsh
+        run: |
+          ./.dependabot-policy/scripts/Get-DependabotPrDecision.ps1 `
+            -DependencyNames '${{ steps.metadata.outputs.dependency-names }}' `
+            -UpdateType      '${{ steps.metadata.outputs.update-type }}' `
+            -DependencyType  '${{ steps.metadata.outputs.dependency-type }}' `
+            -PreviousVersion '${{ steps.metadata.outputs.previous-version }}' `
+            -NewVersion      '${{ steps.metadata.outputs.new-version }}' `
+            -AlertState      '${{ steps.metadata.outputs.alert-state }}' `
+            -Cvss            '${{ steps.metadata.outputs.cvss }}' `
+            -GhsaId          '${{ steps.metadata.outputs.ghsa-id }}' `
+            -Platform        'GitHub' `
+            -Repository      '${{ github.repository }}' `
+            -PullRequestId   '${{ github.event.pull_request.number }}' `
+            -PolicyPath      './.dependabot-policy/config/policy.json' `
+            -AuditPath       './audit/pr-decision.jsonl'
+
+      # ---------------------------------------------------------------------
+      #  4. Label and explain. That is the whole output of this workflow.
+      # ---------------------------------------------------------------------
+      - name: Apply labels
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          LABELS: ${{ steps.decision.outputs.labels }}
+        run: |
+          # gh only attaches labels that already exist in the repository, so
+          # tolerate failure rather than failing the run over cosmetics.
+          gh pr edit "$PR_URL" --add-label "$LABELS" || \
+            echo "::warning::Could not apply all labels. Create them in the repo: $LABELS"
+
+      - name: Post review guidance
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          cat > /tmp/comment.md <<'EOF'
+          ### Dependency review guidance
+
+          | | |
+          |---|---|
+          | Risk tier | `${{ steps.decision.outputs.tier-id }}` |
+          | Suggested approvals | `${{ steps.decision.outputs.required-approvals }}` |
+          | Review SLA | `${{ steps.decision.outputs.sla-hours }}` hours |
+
+          **Why:** ${{ steps.decision.outputs.reasons }}
+
+          This pull request will **not** merge on its own â€” someone needs to review
+          and merge it. Required checks must be green first.
+
+          <sub>Classified against the central dependency policy. To change how this
+          is scored, change the policy â€” not this pull request.</sub>
+          EOF
+          gh pr comment "$PR_URL" --body-file /tmp/comment.md
+
+      - name: Summarise in the run
+        run: |
+          echo "### Dependabot triage" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "PR #${{ github.event.pull_request.number }} classified as \`${{ steps.decision.outputs.tier-id }}\`." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Awaiting human review â€” auto-merge is disabled for this organisation." >> $GITHUB_STEP_SUMMARY
+
+      # ---------------------------------------------------------------------
+      #  5. Retain the audit trail regardless of outcome.
+      # ---------------------------------------------------------------------
+      - name: Upload audit trail
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependabot-decision-${{ github.event.pull_request.number }}
+          path: ./audit/
+          retention-days: 90
+          if-no-files-found: warn

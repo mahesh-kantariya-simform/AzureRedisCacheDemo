@@ -1,0 +1,74 @@
+# =============================================================================
+#  GENERATED FILE - DO NOT EDIT BY HAND
+#
+#  Source of truth : dependabot-poc/config/policy.json
+#                  : dependabot-poc/config/ecosystem-templates/
+#  Generator       : dependabot-poc/scripts/Sync-DependabotConfig.ps1
+#  Generated       : 2026-09-01 07:46:57 UTC
+#  Config hash     : bfe465c9f3828fc6
+#
+#  Hand edits are overwritten on the next sync run. To change behaviour for this
+#  repository, add a "policyOverrides" entry in the repo inventory JSON instead.
+# =============================================================================
+version: 2
+
+
+updates:
+  # ---- NuGet (.NET) -------------------------------------------------------
+  - package-ecosystem: "nuget"
+    directory: "/AzureRedisCacheDemo"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:00"
+      timezone: "Asia/Kolkata"
+    open-pull-requests-limit: 10
+    # NuGet has no lockfile by default, so 'lockfile-only' is not available here.
+    # Version holds for NuGet are expressed through the pins section of the policy.
+    versioning-strategy: auto
+    rebase-strategy: "auto"
+    commit-message:
+      prefix: "deps"
+      prefix-development: "deps-dev"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "nuget"
+    # Wait for a release to settle before proposing it. Guards against
+    # yanked/broken packages and against compromised-release windows.
+    cooldown:
+      default-days: 3
+      semver-major-days: 14
+      semver-minor-days: 7
+      semver-patch-days: 2
+    groups:
+      dev-dependencies:
+        applies-to: version-updates
+        dependency-type: development
+        patterns:
+          - "*"
+        update-types:
+          - "patch"
+          - "minor"
+      runtime-patches:
+        applies-to: version-updates
+        dependency-type: production
+        patterns:
+          - "*"
+        update-types:
+          - "patch"
+    ignore:
+      # Rendered from the "pins" section of the central policy.
+      # NOTE: ignore entries suppress security-update PRs as well as version
+      # bumps. Dependabot ALERTS still fire, and Get-DependencyUpdateReport.ps1
+      # fails the run if any pinned package has an open vulnerability.
+      # Npgsql (hold at 8.0.x) - owner @data-platform, review by 2026-10-01
+      #   Npgsql 9 requires a server-side upgrade we have not scheduled. Holding until the database migration lands.
+      - dependency-name: "Npgsql"
+        versions:
+          - ">=9.0.0"
+      # Microsoft.Extensions.* - owner @platform-team, review by 2027-06-30
+      #   Tied to the .NET LTS major we currently target. Bumped deliberately as part of a framework upgrade, never piecemeal.
+      - dependency-name: "Microsoft.Extensions.*"
+        update-types:
+          - "version-update:semver-major"

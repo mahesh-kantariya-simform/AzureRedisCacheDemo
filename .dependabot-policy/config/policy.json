@@ -1,0 +1,312 @@
+{
+  "$schema": "./policy.schema.json",
+  "version": 1,
+  "description": "Single source of truth for dependency-update risk tiers. Consumed by the GitHub auto-merge workflow, the Azure DevOps PR policy script, and the config generator.",
+
+  "schedule": {
+    "interval": "weekly",
+    "day": "monday",
+    "time": "04:00",
+    "timezone": "Asia/Kolkata"
+  },
+
+  "limits": {
+    "openPullRequestsLimit": 10,
+    "securityOpenPullRequestsLimit": 20,
+    "maxAutoMergesPerRun": 5
+  },
+
+  "cooldown": {
+    "comment": "Wait this many days after a release before proposing it, so we do not adopt a version that gets yanked. Supported natively by GitHub Dependabot; enforced by Set-DependabotPrPolicy.ps1 on Azure DevOps.",
+    "defaultDays": 3,
+    "semverMajorDays": 14,
+    "semverMinorDays": 7,
+    "semverPatchDays": 2,
+    "securityUpdateDays": 0
+  },
+
+  "requiredChecks": [
+    "build",
+    "test",
+    "security-scan"
+  ],
+
+  "autoMerge": {
+    "comment": [
+      "GLOBAL KILL SWITCH for automatic merging.",
+      "",
+      "enabled: false  (current)",
+      "  Dependabot opens pull requests and stops there. Nothing merges without a",
+      "  person clicking merge. The policy engine still runs: it classifies every",
+      "  PR, applies labels, and posts the rationale as a comment - so a reviewer",
+      "  can see at a glance that a PR is a major bump of a pinned package rather",
+      "  than a routine patch. It simply never calls 'gh pr merge --auto' on",
+      "  GitHub, and never sets auto-complete or casts an approval vote on",
+      "  Azure DevOps.",
+      "",
+      "enabled: true",
+      "  The per-tier 'autoMerge' flags below take effect and low-risk updates",
+      "  merge themselves once the required checks pass.",
+      "",
+      "The per-tier flags are deliberately left intact while this is false. They",
+      "document the intended risk model, and flipping this one boolean turns it on",
+      "without re-deriving which tiers were supposed to be automatic."
+    ],
+    "enabled": false
+  },
+
+  "versionSelection": {
+    "comment": [
+      "HOW DEPENDABOT CHOOSES A TARGET VERSION - read this before changing anything below.",
+      "",
+      "1. VERSION UPDATES go to the LATEST release permitted by the manifest constraint.",
+      "2. SECURITY UPDATES go to the MINIMUM release that fixes the advisory, not the latest.",
+      "3. 'versioningStrategy' decides whether the DECLARED constraint is rewritten or only",
+      "   the lockfile is refreshed. This is the main lever for 'stop changing my csproj'.",
+      "",
+      "   auto                  - ecosystem default.",
+      "   increase              - always raise the declared requirement (^1.2.0 -> ^2.0.0).",
+      "   increase-if-necessary - only raise the declared requirement when the new version",
+      "                           falls outside the existing range. Preserves intentional ranges.",
+      "   lockfile-only         - never edit the manifest. Only refresh the resolved version",
+      "                           in the lockfile. Strongest 'my declared versions are law' mode.",
+      "                           Supported for npm/yarn/pnpm, pip, bundler, composer, cargo.",
+      "                           NOT supported for nuget - NuGet has no separate lockfile by",
+      "                           default, so pinning there is done via the manifest + pins below.",
+      "   widen                 - widen the accepted range instead of moving it (npm, composer)."
+    ],
+    "versioningStrategy": {
+      "nuget": "auto",
+      "npm": "increase-if-necessary",
+      "pip": "increase-if-necessary",
+      "maven": "auto",
+      "gomod": "auto"
+    }
+  },
+
+  "pins": {
+    "comment": [
+      "THE PINNING MODEL. Two modes, and picking the right one matters.",
+      "",
+      "  mode: 'soft'  (DEFAULT, and what you should reach for first)",
+      "     Dependabot STILL OPENS THE PR. The policy engine refuses to auto-merge it and",
+      "     labels it for human review. You keep visibility: you can see that 4.2.0 exists,",
+      "     read the changelog, and decide. Nothing moves without a person.",
+      "",
+      "  mode: 'hard'",
+      "     Renders an 'ignore' entry into dependabot.yml. NO PR IS EVER OPENED for the",
+      "     ignored versions. Use only when the PR noise is genuinely unacceptable.",
+      "",
+      "     !! THE TRAP !!  An 'ignore' entry with a 'versions' range ALSO suppresses",
+      "     SECURITY update PRs for those versions. You can silently sit on a known CVE and",
+      "     never be told by a pull request. Two mitigations, both applied by this POC:",
+      "       a) prefer 'ignoreUpdateTypes' (semver-scoped) over 'ignoreVersions' (range-scoped),",
+      "          because semver-scoped ignores are far less likely to swallow a security fix;",
+      "       b) Get-DependencyUpdateReport.ps1 reconciles every hard pin against the open",
+      "          Dependabot alerts and raises PINNED-AND-VULNERABLE as a hard failure.",
+      "     Dependabot ALERTS are never suppressed by dependabot.yml - only PRs are. The report",
+      "     is therefore the backstop that makes hard pinning safe to use at all.",
+      "",
+      "Every pin requires an owner and a reviewBy date. Pins without an expiry become",
+      "permanent by accident; the report flags expired ones."
+    ],
+    "expiredPinBehaviour": "warn",
+    "entries": [
+      {
+        "dependencyName": "Newtonsoft.Json",
+        "ecosystem": "nuget",
+        "mode": "soft",
+        "reason": "Serialization behaviour differences across majors have broken API contracts for us before. Every bump gets a human and a contract-test run.",
+        "owner": "@platform-team",
+        "reviewBy": "2026-12-31"
+      },
+      {
+        "dependencyName": "Npgsql",
+        "ecosystem": "nuget",
+        "mode": "hard",
+        "holdAt": "8.0.x",
+        "ignoreVersions": [">=9.0.0"],
+        "reason": "Npgsql 9 requires a server-side upgrade we have not scheduled. Holding until the database migration lands.",
+        "owner": "@data-platform",
+        "reviewBy": "2026-10-01"
+      },
+      {
+        "dependencyName": "Microsoft.Extensions.*",
+        "ecosystem": "nuget",
+        "mode": "hard",
+        "ignoreUpdateTypes": ["version-update:semver-major"],
+        "reason": "Tied to the .NET LTS major we currently target. Bumped deliberately as part of a framework upgrade, never piecemeal.",
+        "owner": "@platform-team",
+        "reviewBy": "2027-06-30"
+      },
+      {
+        "dependencyName": "@angular/core",
+        "ecosystem": "npm",
+        "mode": "hard",
+        "ignoreUpdateTypes": ["version-update:semver-major"],
+        "reason": "Angular majors require a coordinated ng update across the whole workspace.",
+        "owner": "@frontend-team",
+        "reviewBy": "2027-01-31"
+      },
+      {
+        "dependencyName": "typescript",
+        "ecosystem": "npm",
+        "mode": "soft",
+        "reason": "TypeScript minors introduce new type errors in existing code. Always human-reviewed, never auto-merged.",
+        "owner": "@frontend-team",
+        "reviewBy": "2027-01-31"
+      }
+    ]
+  },
+
+  "tiers": [
+    {
+      "id": "security-critical",
+      "rank": 100,
+      "description": "Known vulnerability, CVSS >= 7.0. Fastest path to production.",
+      "match": {
+        "isSecurityUpdate": true,
+        "minCvss": 7.0
+      },
+      "action": {
+        "autoMerge": true,
+        "mergeStrategy": "squash",
+        "requiredHumanApprovals": 0,
+        "requireCiGreen": true,
+        "labels": ["dependencies", "security", "severity:high", "auto-merge"],
+        "notify": ["#appsec-alerts"],
+        "slaHours": 24
+      }
+    },
+    {
+      "id": "security-moderate",
+      "rank": 90,
+      "description": "Known vulnerability below CVSS 7.0.",
+      "match": {
+        "isSecurityUpdate": true,
+        "minCvss": 0.0
+      },
+      "action": {
+        "autoMerge": true,
+        "mergeStrategy": "squash",
+        "requiredHumanApprovals": 0,
+        "requireCiGreen": true,
+        "labels": ["dependencies", "security", "auto-merge"],
+        "notify": ["#appsec-alerts"],
+        "slaHours": 168
+      }
+    },
+    {
+      "id": "dev-dependency-any",
+      "rank": 70,
+      "description": "Test/build-time only dependency. Blast radius is CI, not production.",
+      "match": {
+        "isSecurityUpdate": false,
+        "dependencyTypes": ["direct:development"],
+        "updateTypes": ["patch", "minor", "major"]
+      },
+      "action": {
+        "autoMerge": true,
+        "mergeStrategy": "squash",
+        "requiredHumanApprovals": 0,
+        "requireCiGreen": true,
+        "labels": ["dependencies", "dev-dependency", "auto-merge"],
+        "slaHours": 336
+      }
+    },
+    {
+      "id": "runtime-patch",
+      "rank": 60,
+      "description": "Production dependency, patch bump. Semver says no API change.",
+      "match": {
+        "isSecurityUpdate": false,
+        "dependencyTypes": ["direct:production", "indirect"],
+        "updateTypes": ["patch"]
+      },
+      "action": {
+        "autoMerge": true,
+        "mergeStrategy": "squash",
+        "requiredHumanApprovals": 0,
+        "requireCiGreen": true,
+        "labels": ["dependencies", "auto-merge"],
+        "slaHours": 336
+      }
+    },
+    {
+      "id": "runtime-minor",
+      "rank": 50,
+      "description": "Production dependency, minor bump. New surface area, backwards compatible in theory.",
+      "match": {
+        "isSecurityUpdate": false,
+        "dependencyTypes": ["direct:production", "indirect"],
+        "updateTypes": ["minor"]
+      },
+      "action": {
+        "autoMerge": false,
+        "mergeStrategy": "squash",
+        "requiredHumanApprovals": 1,
+        "requireCiGreen": true,
+        "labels": ["dependencies", "needs-review"],
+        "slaHours": 720
+      }
+    },
+    {
+      "id": "runtime-major",
+      "rank": 40,
+      "description": "Breaking change by definition. Always a human decision.",
+      "match": {
+        "isSecurityUpdate": false,
+        "dependencyTypes": ["direct:production", "indirect"],
+        "updateTypes": ["major"]
+      },
+      "action": {
+        "autoMerge": false,
+        "mergeStrategy": "squash",
+        "requiredHumanApprovals": 2,
+        "requireCiGreen": true,
+        "labels": ["dependencies", "breaking-change", "needs-review"],
+        "slaHours": 2160
+      }
+    }
+  ],
+
+  "denyAutoMerge": {
+    "comment": "Belt and braces. Anything matching these is forced to requiredHumanApprovals >= 1 regardless of tier, because a compromised or mis-scored package here is unrecoverable. Soft pins from the 'pins' section are merged into this list automatically at evaluation time - you do not need to repeat them here.",
+    "packages": [
+      "Microsoft.EntityFrameworkCore*",
+      "Microsoft.AspNetCore.Authentication*",
+      "System.IdentityModel.Tokens*",
+      "Microsoft.IdentityModel*",
+      "Newtonsoft.Json",
+      "webpack",
+      "typescript",
+      "@angular/core",
+      "react",
+      "react-dom",
+      "next"
+    ],
+    "paths": [
+      "**/Directory.Packages.props",
+      "**/global.json"
+    ]
+  },
+
+  "grouping": {
+    "comment": "Grouping collapses many small PRs into one, which cuts CI cost and review load. Never group security updates - they need to be independently revertible.",
+    "enabled": true,
+    "groups": [
+      {
+        "name": "dev-dependencies",
+        "appliesTo": "version-updates",
+        "dependencyType": "development",
+        "updateTypes": ["patch", "minor"]
+      },
+      {
+        "name": "runtime-patches",
+        "appliesTo": "version-updates",
+        "dependencyType": "production",
+        "updateTypes": ["patch"]
+      }
+    ]
+  }
+}
