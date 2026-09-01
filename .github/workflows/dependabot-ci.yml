@@ -1,0 +1,161 @@
+# =============================================================================
+#  CI validation for .NET dependency-update pull requests.
+#
+#  Copy to .github/workflows/dependabot-ci.yml in each target repository.
+#
+#  The JOB NAMES here (build / test / security-scan) must match
+#  config/policy.json -> requiredChecks, because those are the contexts the
+#  branch ruleset requires before a pull request can be merged. If they drift,
+#  the ruleset waits on a check that never reports and PRs block forever.
+#
+#  Runs for ALL pull requests, not only Dependabot's. A dependency bump that is
+#  only validated by a special-case pipeline is a bump nobody trusts.
+# =============================================================================
+name: CI
+
+on:
+  pull_request:
+  push:
+    # Both names listed: older repositories still use 'master', and a trigger
+    # that silently never fires is hard to notice.
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_VERSION: '8.0.x'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
+  DOTNET_NOLOGO: 'true'
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/packages.lock.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      # Restore is where a bad dependency bump fails first and cheapest.
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore --configuration Release
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/packages.lock.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      # `dotnet test` on a solution with no test project exits 0 and runs nothing.
+      # A green "test" check that tested nothing is worse than a red one: it looks
+      # like validation happened. Say so loudly instead of passing silently.
+      - name: Check that tests exist
+        id: findtests
+        shell: bash
+        run: |
+          COUNT=$(grep -rl --include='*.csproj' -E 'Microsoft\.NET\.Test\.Sdk|xunit|NUnit|MSTest\.TestFramework' . | wc -l)
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          if [ "$COUNT" -eq 0 ]; then
+            echo "::warning title=No tests in this repository::The 'test' check passed without running anything, because no test project was found. This check currently proves nothing. Add a test project, or drop 'test' from the required checks so the gate reflects reality."
+            {
+              echo "### :warning: No tests found"
+              echo ""
+              echo "The \`test\` check passed **without running anything** â€” there is no test project in this repository."
+              echo "A dependency update reaching \`main\` on the strength of this check has not actually been validated."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Found $COUNT test project(s)."
+          fi
+
+      - name: Test
+        if: steps.findtests.outputs.count != '0'
+        run: |
+          dotnet test --configuration Release \
+            --logger "trx;LogFileName=test-results.trx" \
+            --results-directory ./TestResults
+
+      - name: Publish test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: ./TestResults/
+          retention-days: 30
+          if-no-files-found: ignore
+
+  security-scan:
+    name: security-scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out pull request
+        uses: actions/checkout@v4
+
+      # The base branch, so the gate can tell a NEWLY introduced vulnerability
+      # from one that was already there. Without this the gate deadlocks: if main
+      # has any unfixed advisory, every PR inherits it and fails - including the
+      # security PR that would fix it.
+      - name: Check out base branch for comparison
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .base
+      # The policy is vendored at .dependabot-policy/ in this repository,
+      # so there is nothing to check out.
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      # On a pull request this runs in differential mode: only vulnerabilities
+      # this change ADDS block the merge. Pre-existing ones are reported as
+      # warnings and picked up by the scheduled dependency report instead.
+      #
+      # On a push to main there is no baseline, so it runs in absolute mode and
+      # every finding at or above the threshold fails - which is what you want
+      # from a scan of the default branch.
+      - name: NuGet vulnerability gate
+        shell: pwsh
+        run: |
+          $baseline = if ('${{ github.event_name }}' -eq 'pull_request') { './.base' } else { '' }
+          ./.dependabot-policy/scripts/Test-NuGetVulnerability.ps1 `
+            -Path '.' `
+            -BaselinePath $baseline `
+            -FailOnSeverity High `
+            -OutputPath './audit/vulnerability-report.json' `
+            -AuditPath './audit/security-scan.jsonl'
+
+      - name: Upload vulnerability report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-audit
+          path: ./audit/
+          retention-days: 90
+          if-no-files-found: ignore
