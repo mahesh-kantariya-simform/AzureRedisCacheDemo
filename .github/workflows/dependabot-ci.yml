@@ -132,7 +132,7 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha }}
           path: .base
       # The policy is vendored at .dependabot-policy/ in this repository,
-      # so there is nothing to check out.
+      # so there is nothing extra to check out.
 
       - uses: actions/setup-dotnet@v4
         with:
