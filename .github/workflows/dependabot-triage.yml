@@ -59,8 +59,12 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           alert-lookup: true
           compat-lookup: true
-      # The policy is vendored at .dependabot-policy/ in this repository,
-      # so there is nothing to check out.
+      # The policy is vendored at .dependabot-policy/ in this repository, so
+      # check out THIS repo rather than a central policy repo. This checkout
+      # is required: it is the only one in the job, and without it the
+      # workspace is empty and the policy scripts below are not found.
+      - name: Check out repository
+        uses: actions/checkout@v4
 
       - name: Evaluate policy
         id: decision
