@@ -4,8 +4,8 @@
 #  Source of truth : dependabot-poc/config/policy.json
 #                  : dependabot-poc/config/ecosystem-templates/
 #  Generator       : dependabot-poc/scripts/Sync-DependabotConfig.ps1
-#  Generated       : 2026-09-01 07:46:57 UTC
-#  Config hash     : bfe465c9f3828fc6
+#  Generated       : 2026-09-01 08:16:36 UTC
+#  Config hash     : 37bef95c3723f346
 #
 #  Hand edits are overwritten on the next sync run. To change behaviour for this
 #  repository, add a "policyOverrides" entry in the repo inventory JSON instead.
@@ -23,9 +23,13 @@ updates:
       time: "04:00"
       timezone: "Asia/Kolkata"
     open-pull-requests-limit: 10
-    # NuGet has no lockfile by default, so 'lockfile-only' is not available here.
-    # Version holds for NuGet are expressed through the pins section of the policy.
-    versioning-strategy: auto
+    # NOTE: 'versioning-strategy' is NOT valid for nuget. Dependabot's schema only
+    # accepts it for bundler, cargo, composer, mix, npm, pip, pub and uv - and it
+    # rejects the WHOLE config file if the key appears anywhere else:
+    #   '#/updates/0/' contains additional properties ["versioning-strategy"]
+    #   outside of the schema when none are allowed
+    # For .NET, version holds are expressed through the pins section of the policy
+    # instead. See docs/09.
     rebase-strategy: "auto"
     commit-message:
       prefix: "deps"
