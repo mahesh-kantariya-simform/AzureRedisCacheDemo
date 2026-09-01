@@ -79,7 +79,12 @@ jobs:
         id: findtests
         shell: bash
         run: |
-          COUNT=$(grep -rl --include='*.csproj' -E 'Microsoft\.NET\.Test\.Sdk|xunit|NUnit|MSTest\.TestFramework' . | wc -l)
+          # The braces and `|| true` are load-bearing. GitHub Actions runs bash
+          # with `-eo pipefail`, and grep exits 1 when it matches nothing - which
+          # is exactly the case this step exists to detect. Without swallowing
+          # that, pipefail propagates the 1 through `| wc -l` and `-e` kills the
+          # step, so the "no tests" guard fails precisely when there are no tests.
+          COUNT=$( { grep -rl --include='*.csproj' -E 'Microsoft\.NET\.Test\.Sdk|xunit|NUnit|MSTest\.TestFramework' . || true; } | wc -l )
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
           if [ "$COUNT" -eq 0 ]; then
             echo "::warning title=No tests in this repository::The 'test' check passed without running anything, because no test project was found. This check currently proves nothing. Add a test project, or drop 'test' from the required checks so the gate reflects reality."
