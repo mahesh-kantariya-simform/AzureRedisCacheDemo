@@ -115,11 +115,11 @@ jobs:
 
           **Why:** ${{ steps.decision.outputs.reasons }}
 
-          This pull request will **not** merge on its own â€” someone needs to review
+          This pull request will **not** merge on its own - someone needs to review
           and merge it. Required checks must be green first.
 
           <sub>Classified against the central dependency policy. To change how this
-          is scored, change the policy â€” not this pull request.</sub>
+          is scored, change the policy - not this pull request.</sub>
           EOF
           gh pr comment "$PR_URL" --body-file /tmp/comment.md
 
@@ -129,7 +129,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "PR #${{ github.event.pull_request.number }} classified as \`${{ steps.decision.outputs.tier-id }}\`." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Awaiting human review â€” auto-merge is disabled for this organisation." >> $GITHUB_STEP_SUMMARY
+          echo "Awaiting human review - auto-merge is disabled for this organisation." >> $GITHUB_STEP_SUMMARY
 
       # ---------------------------------------------------------------------
       #  5. Retain the audit trail regardless of outcome.

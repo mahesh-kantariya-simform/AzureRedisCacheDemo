@@ -91,7 +91,7 @@ jobs:
             {
               echo "### :warning: No tests found"
               echo ""
-              echo "The \`test\` check passed **without running anything** â€” there is no test project in this repository."
+              echo "The \`test\` check passed **without running anything** - there is no test project in this repository."
               echo "A dependency update reaching \`main\` on the strength of this check has not actually been validated."
             } >> "$GITHUB_STEP_SUMMARY"
           else
